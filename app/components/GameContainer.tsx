@@ -1,16 +1,49 @@
 "use client";
 
 import { useState } from "react";
-import players from "@/app/data/players";
+import players, { type Player } from "@/app/data/players";
 
-const stats = ["goals", "assists", "appearances"] as const;
+const stats = [
+  "clubGoals",
+  "clubAssists",
+  "clubAppearances",
+  "internationalGoals",
+  "internationalAssists",
+  "internationalAppearances",
+] as const;
 
-function getRandomTarget() {
-  return Math.floor(Math.random() * 40) + 20;
+type StatKey = (typeof stats)[number];
+
+const statLabels: Record<StatKey, string> = {
+  clubGoals: "Club Goals",
+  clubAssists: "Club Assists",
+  clubAppearances: "Club Appearances",
+  internationalGoals: "International Goals",
+  internationalAssists: "International Assists",
+  internationalAppearances: "International Appearances",
+};
+
+function getRandomTarget(stat: StatKey) {
+  const values = players.map((player) => player[stat]).sort((a, b) => a - b);
+  const minSum = values[0] + values[1] + values[2];
+  const maxSum =
+    values[values.length - 1] +
+    values[values.length - 2] +
+    values[values.length - 3];
+
+  return Math.floor(minSum + Math.random() * (maxSum - minSum + 1));
 }
 
 function getRandomStat() {
   return stats[Math.floor(Math.random() * stats.length)];
+}
+
+function createRound() {
+  const stat = getRandomStat();
+  return {
+    currentStat: stat,
+    targetNumber: getRandomTarget(stat),
+  };
 }
 
 function getResultPresentation(difference: number) {
@@ -56,15 +89,15 @@ function getResultPresentation(difference: number) {
 
 export default function GameContainer() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedPlayers, setSelectedPlayers] = useState<typeof players>([]);
-  const [targetNumber, setTargetNumber] = useState(getRandomTarget);
-  const [currentStat, setCurrentStat] = useState<(typeof stats)[number]>(
-    getRandomStat
-  );
+  const [selectedPlayers, setSelectedPlayers] = useState<Player[]>([]);
+  const [round, setRound] = useState(createRound);
+  const { currentStat, targetNumber } = round;
   const [result, setResult] = useState<null | {
     total: number;
     difference: number;
   }>(null);
+
+  const currentStatLabel = statLabels[currentStat];
 
   const filteredPlayers = players.filter((player) =>
     player.name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -76,7 +109,7 @@ export default function GameContainer() {
 
   const canSubmit = selectedPlayers.length === 3 && result === null;
 
-  function handleSelectPlayer(player: (typeof players)[number]) {
+  function handleSelectPlayer(player: Player) {
     if (selectedPlayers.length === 3) return;
 
     const alreadySelected = selectedPlayers.some(
@@ -110,8 +143,7 @@ export default function GameContainer() {
     setSelectedPlayers([]);
     setSearchTerm("");
     setResult(null);
-    setTargetNumber(getRandomTarget());
-    setCurrentStat(getRandomStat());
+    setRound(createRound());
   }
 
   const resultPresentation = result
@@ -134,12 +166,12 @@ export default function GameContainer() {
           </p>
 
           <span className="mt-4 inline-flex items-center rounded-full border border-emerald-700/50 bg-emerald-950/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-300">
-            {currentStat}
+            {currentStatLabel}
           </span>
 
           <p className="mt-4 text-sm leading-relaxed text-zinc-400">
             Pick 3 players whose combined{" "}
-            <span className="font-medium text-emerald-300">{currentStat}</span>{" "}
+            <span className="font-medium text-emerald-300">{currentStatLabel}</span>{" "}
             gets closest.
           </p>
         </div>
@@ -167,7 +199,7 @@ export default function GameContainer() {
                       className="cursor-pointer border-b border-zinc-800/80 px-4 py-3 transition last:border-b-0 hover:bg-emerald-950/60"
                     >
                       <p className="text-sm font-medium text-white">{player.name}</p>
-                      <p className="text-xs text-zinc-500">{player.club}</p>
+                      <p className="text-xs text-zinc-500">{player.currentClub}</p>
                     </div>
                   ))
                 )}
@@ -205,7 +237,7 @@ export default function GameContainer() {
                           <span className="font-semibold tabular-nums text-emerald-400">
                             {player[currentStat]}
                           </span>{" "}
-                          {currentStat}
+                          {currentStatLabel}
                         </p>
                       )}
                     </div>
