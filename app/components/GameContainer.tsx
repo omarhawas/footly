@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import players, { type Player } from "@/app/data/players";
 
 const stats = [
@@ -207,6 +207,115 @@ function getResultPresentation(difference: number) {
   };
 }
 
+function PlayerMeta({ player }: { player: Player }) {
+  return (
+    <p className="text-xs text-zinc-500">
+      {player.currentClub}
+      <span className="text-zinc-600"> · </span>
+      {player.country}
+    </p>
+  );
+}
+
+function getResultSubtext(difference: number) {
+  if (difference === 0) {
+    return "Absolute perfection. You nailed today's challenge.";
+  }
+  if (difference <= 3) {
+    return "So close — a world-class effort.";
+  }
+  if (difference <= 8) {
+    return "Strong guess. You read the game well.";
+  }
+  if (difference <= 15) {
+    return "Not far off. One more sharp pick next time.";
+  }
+  return "Tough one today — come back tomorrow and go again.";
+}
+
+type PuzzleAnalysis = {
+  exactSolutions: number;
+  within1: number;
+  within2: number;
+  within5: number;
+};
+
+function analyzePuzzle(stat: StatKey, targetNumber: number): PuzzleAnalysis {
+  const values = players.map((player) => player[stat]);
+  let exactSolutions = 0;
+  let within1 = 0;
+  let within2 = 0;
+  let within5 = 0;
+
+  for (let i = 0; i < values.length - 2; i++) {
+    const valueI = values[i];
+
+    for (let j = i + 1; j < values.length - 1; j++) {
+      const sumIJ = valueI + values[j];
+
+      for (let k = j + 1; k < values.length; k++) {
+        const difference = Math.abs(targetNumber - (sumIJ + values[k]));
+
+        if (difference === 0) exactSolutions++;
+        if (difference <= 1) within1++;
+        if (difference <= 2) within2++;
+        if (difference <= 5) within5++;
+      }
+    }
+  }
+
+  return { exactSolutions, within1, within2, within5 };
+}
+
+type PuzzleDifficulty = {
+  label: "Easy" | "Normal" | "Hard" | "Very Hard" | "Impossible";
+  badgeClassName: string;
+  textClassName: string;
+};
+
+function getPuzzleDifficulty(exactSolutions: number): PuzzleDifficulty {
+  if (exactSolutions <= 5) {
+    return {
+      label: "Impossible",
+      badgeClassName:
+        "border-purple-700/50 bg-purple-950/80 text-purple-300 ring-purple-600/30",
+      textClassName: "text-purple-300",
+    };
+  }
+
+  if (exactSolutions <= 25) {
+    return {
+      label: "Very Hard",
+      badgeClassName: "border-red-700/50 bg-red-950/80 text-red-300 ring-red-600/30",
+      textClassName: "text-red-300",
+    };
+  }
+
+  if (exactSolutions <= 100) {
+    return {
+      label: "Hard",
+      badgeClassName:
+        "border-amber-600/50 bg-amber-950/80 text-amber-300 ring-amber-600/30",
+      textClassName: "text-amber-300",
+    };
+  }
+
+  if (exactSolutions <= 500) {
+    return {
+      label: "Normal",
+      badgeClassName: "border-blue-700/50 bg-blue-950/80 text-blue-300 ring-blue-600/30",
+      textClassName: "text-blue-300",
+    };
+  }
+
+  return {
+    label: "Easy",
+    badgeClassName:
+      "border-emerald-700/50 bg-emerald-950/80 text-emerald-300 ring-emerald-600/30",
+    textClassName: "text-emerald-300",
+  };
+}
+
 export default function GameContainer() {
   const puzzleNumber = getPuzzleNumber(new Date());
   const [searchTerm, setSearchTerm] = useState("");
@@ -220,6 +329,8 @@ export default function GameContainer() {
   }>(null);
   const [showAnswer, setShowAnswer] = useState(false);
   const [shareCopied, setShareCopied] = useState(false);
+  const resultSectionRef = useRef<HTMLDivElement>(null);
+  const shouldScrollToResultRef = useRef(false);
 
   useEffect(() => {
     const saved = loadSavedCompletion();
@@ -244,6 +355,16 @@ export default function GameContainer() {
       difference: saved.difference,
     });
   }, [puzzleNumber]);
+
+  useEffect(() => {
+    if (!result || !shouldScrollToResultRef.current) return;
+
+    shouldScrollToResultRef.current = false;
+    resultSectionRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+    });
+  }, [result]);
 
   const currentStatLabel = statLabels[currentStat];
 
@@ -298,6 +419,7 @@ export default function GameContainer() {
     };
 
     setResult(submission);
+    shouldScrollToResultRef.current = true;
 
     if (!isPracticeRound) {
       saveCompletion({
@@ -352,249 +474,295 @@ export default function GameContainer() {
     ? getResultPresentation(result.difference)
     : null;
 
+  const puzzleAnalysis = useMemo(
+    () => analyzePuzzle(currentStat, targetNumber),
+    [currentStat, targetNumber]
+  );
+
+  const puzzleDifficulty = useMemo(
+    () => getPuzzleDifficulty(puzzleAnalysis.exactSolutions),
+    [puzzleAnalysis.exactSolutions]
+  );
+
   return (
-    <main className="flex min-h-dvh w-full flex-1 items-center justify-center bg-zinc-950 px-4 py-10">
-      <div className="w-full max-w-md overflow-hidden rounded-2xl border border-emerald-900/60 bg-zinc-900/90 shadow-2xl shadow-black/50 ring-1 ring-white/5 backdrop-blur-sm">
-        <div className="border-b border-emerald-900/40 bg-linear-to-b from-emerald-950/80 to-zinc-900 px-6 py-8 text-center">
-          <h1 className="text-sm font-semibold uppercase tracking-[0.35em] text-emerald-400/90">
+    <main className="flex min-h-dvh w-full flex-1 items-center justify-center bg-zinc-950 bg-[radial-gradient(ellipse_at_top,rgba(16,185,129,0.08),transparent_55%)] px-4 py-10">
+      <div className="w-full max-w-md overflow-hidden rounded-2xl border border-emerald-900/50 bg-zinc-900/95 shadow-2xl shadow-black/50 ring-1 ring-white/5">
+        <div className="border-b border-emerald-900/30 bg-linear-to-b from-emerald-950/90 via-zinc-900 to-zinc-900 px-6 py-8 text-center">
+          <h1 className="text-base font-bold uppercase tracking-[0.35em] text-emerald-400">
             Footly
           </h1>
 
-          <p className="mt-2 text-xs font-medium uppercase tracking-widest text-zinc-500">
-            Footly #{puzzleNumber}
+          <p className="mt-2 text-sm text-zinc-400">
+            The daily football numbers game.
           </p>
 
-          <p className="mt-6 text-xs font-medium uppercase tracking-widest text-zinc-500">
-            Target
-          </p>
-          <p className="mt-1 text-7xl font-bold tabular-nums tracking-tight text-white">
-            {targetNumber}
-          </p>
-
-          <span className="mt-4 inline-flex items-center rounded-full border border-emerald-700/50 bg-emerald-950/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-emerald-300">
-            {currentStatLabel}
+          <span className="mt-3 inline-flex items-center rounded-full border border-zinc-700/60 bg-zinc-950/80 px-3 py-1 text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
+            #{puzzleNumber}
           </span>
 
-          <p className="mt-4 text-sm leading-relaxed text-zinc-400">
-            Pick 3 players whose combined{" "}
-            <span className="font-medium text-emerald-300">{currentStatLabel}</span>{" "}
-            gets closest.
+          <p className="mt-8 text-[10px] font-bold uppercase tracking-[0.3em] text-emerald-500/80">
+            Today&apos;s Challenge
           </p>
+
+          <span
+            className={`mt-3 inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ring-1 ring-inset ${puzzleDifficulty.badgeClassName}`}
+          >
+            Difficulty: {puzzleDifficulty.label}
+          </span>
+
+          <p className="mt-4 text-2xl font-bold tracking-tight text-white sm:text-3xl">
+            {currentStatLabel}
+          </p>
+
+          <div className="mt-6 rounded-2xl border border-emerald-800/40 bg-emerald-950/30 px-5 py-4">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-400/70">
+              Target
+            </p>
+            <p className="mt-1 text-6xl font-black tabular-nums tracking-tight text-white">
+              {targetNumber}
+            </p>
+          </div>
+
+          {!result && (
+            <p className="mt-5 text-sm font-medium leading-relaxed text-zinc-300">
+              Can you hit the target exactly? Pick 3 players.
+            </p>
+          )}
         </div>
 
-        <div className="space-y-6 px-6 py-6">
-          <div className="relative">
-            <input
-              type="text"
-              placeholder="Search player..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              disabled={result !== null}
-              className="w-full rounded-xl border border-zinc-700/80 bg-zinc-950/80 px-4 py-3 text-sm text-white placeholder:text-zinc-500 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/30 disabled:cursor-not-allowed disabled:opacity-50"
-            />
-
-            {searchTerm && !result && (
-              <div className="absolute top-full z-10 mt-2 max-h-48 w-full overflow-y-auto rounded-xl border border-zinc-700/80 bg-zinc-950 shadow-xl">
-                {filteredPlayers.length === 0 ? (
-                  <p className="px-4 py-3 text-sm text-zinc-500">No players found</p>
-                ) : (
-                  filteredPlayers.map((player) => (
-                    <div
-                      key={player.id}
-                      onClick={() => handleSelectPlayer(player)}
-                      className="cursor-pointer border-b border-zinc-800/80 px-4 py-3 transition last:border-b-0 hover:bg-emerald-950/60"
-                    >
-                      <p className="text-sm font-medium text-white">{player.name}</p>
-                      <p className="text-xs text-zinc-500">{player.currentClub}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-
-          <div>
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-500">
-                Selected Players
-              </h2>
-              <span className="text-xs font-medium tabular-nums text-zinc-400">
-                {selectedPlayers.length}/3
-              </span>
-            </div>
-
-            {selectedPlayers.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-zinc-700/60 bg-zinc-950/40 px-4 py-6 text-center text-sm text-zinc-500">
-                No players selected yet
-              </p>
-            ) : (
-              <ul className="space-y-2">
-                {selectedPlayers.map((player) => (
-                  <li
-                    key={player.id}
-                    className="flex items-center justify-between gap-3 rounded-xl border border-zinc-700/60 bg-zinc-950/60 px-4 py-3"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-white">
-                        {player.name}
-                      </p>
-                      {result && (
-                        <p className="text-xs text-zinc-500">
-                          <span className="font-semibold tabular-nums text-emerald-400">
-                            {player[currentStat]}
-                          </span>{" "}
-                          {currentStatLabel}
-                        </p>
-                      )}
-                    </div>
-
-                    {!result && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemovePlayer(player.id)}
-                        className="shrink-0 rounded-lg border border-zinc-600/80 px-2.5 py-1 text-xs font-medium text-zinc-400 transition hover:border-red-900/60 hover:bg-red-950/40 hover:text-red-300"
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <button
-            type="button"
-            disabled={!canSubmit}
-            onClick={handleSubmit}
-            className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-900/40 transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500 disabled:shadow-none"
-          >
-            Submit
-          </button>
-
-          {result && resultPresentation && (
-            <div
-              className={`relative overflow-hidden rounded-2xl border px-5 py-6 text-center shadow-lg ${resultPresentation.card}`}
-            >
-              <div className="pointer-events-none absolute -top-12 left-1/2 h-32 w-32 -translate-x-1/2 rounded-full bg-emerald-400/10 blur-3xl" />
-              <div className="pointer-events-none absolute -bottom-8 right-0 h-24 w-24 rounded-full bg-white/5 blur-2xl" />
-
-              <span
-                className={`relative inline-flex rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-[0.25em] ring-1 ring-inset ${resultPresentation.badge}`}
-              >
-                Round Complete
-              </span>
-
-              <p
-                className={`relative mt-4 text-2xl font-bold tracking-tight sm:text-3xl ${resultPresentation.headline}`}
-              >
-                {resultPresentation.message}
-              </p>
-
-              <p className="relative mt-2 text-xs text-zinc-500">
-                {result.difference === 0 ? (
-                  "Bullseye — you hit the target exactly."
-                ) : (
-                  <>
-                    You were{" "}
-                    <span className="font-semibold tabular-nums text-zinc-300">
-                      {result.difference}
-                    </span>{" "}
-                    {result.difference === 1 ? "point" : "points"} away
-                  </>
-                )}
-              </p>
-
-              <div className="relative mt-6 grid grid-cols-3 gap-2 rounded-xl border border-white/5 bg-black/25 p-3">
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                    Total
-                  </p>
-                  <p className="mt-1 text-xl font-bold tabular-nums text-white">
-                    {result.total}
-                  </p>
-                </div>
-                <div className="border-x border-white/5">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                    Target
-                  </p>
-                  <p className="mt-1 text-xl font-bold tabular-nums text-white">
-                    {targetNumber}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
-                    Difference
-                  </p>
-                  <p className="mt-1 text-xl font-bold tabular-nums text-emerald-300">
-                    {result.difference}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {result && resultPresentation && (
-            <div className="relative">
-              <button
-                type="button"
-                onClick={handleShareResult}
-                className="w-full rounded-xl border border-emerald-700/60 bg-emerald-950/40 px-4 py-3 text-sm font-semibold text-emerald-300 transition hover:border-emerald-500 hover:bg-emerald-950/60"
-              >
-                Share Result
-              </button>
-              {shareCopied && (
-                <p className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] font-medium text-emerald-400">
-                  Copied!
-                </p>
-              )}
-            </div>
-          )}
-
-          {result && (
+        <div className="space-y-4 px-6 py-5">
+          {!result ? (
             <>
-              {!showAnswer ? (
-                <button
-                  type="button"
-                  onClick={() => setShowAnswer(true)}
-                  className="w-full rounded-xl border border-zinc-700/60 bg-zinc-950/60 px-4 py-3 text-sm font-semibold text-zinc-300 transition hover:border-zinc-600 hover:bg-zinc-900/80"
-                >
-                  Reveal Answer
-                </button>
-              ) : (
-                <div className="rounded-xl border border-zinc-700/60 bg-zinc-950/60 px-4 py-4">
-                  <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-500">
-                    Answer
-                  </h2>
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Search for a player..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full rounded-xl border border-zinc-700/80 bg-zinc-950/80 px-4 py-3.5 text-sm text-white placeholder:text-zinc-500 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/30"
+                />
 
-                  <ul className="mt-3 space-y-2">
-                    {solutionPlayers.map((player) => (
+                {searchTerm && (
+                  <div className="absolute top-full z-10 mt-2 max-h-52 w-full overflow-y-auto rounded-xl border border-zinc-700/80 bg-zinc-950 shadow-xl ring-1 ring-white/5">
+                    {filteredPlayers.length === 0 ? (
+                      <p className="px-4 py-3 text-sm text-zinc-500">No players found</p>
+                    ) : (
+                      filteredPlayers.map((player) => (
+                        <div
+                          key={player.id}
+                          onClick={() => handleSelectPlayer(player)}
+                          className="cursor-pointer border-b border-zinc-800/80 px-4 py-3 transition last:border-b-0 hover:bg-emerald-950/50"
+                        >
+                          <p className="text-sm font-semibold text-white">{player.name}</p>
+                          <PlayerMeta player={player} />
+                          <p className="mt-0.5 text-[10px] uppercase tracking-wider text-zinc-600">
+                            {player.position}
+                          </p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="mb-3 flex items-center justify-between">
+                  <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-500">
+                    Your Squad
+                  </h2>
+                  <span className="rounded-full bg-zinc-800 px-2.5 py-0.5 text-xs font-semibold tabular-nums text-zinc-300">
+                    {selectedPlayers.length}/3
+                  </span>
+                </div>
+
+                {selectedPlayers.length === 0 ? (
+                  <p className="rounded-xl border border-dashed border-zinc-700/60 bg-zinc-950/40 px-4 py-8 text-center text-sm text-zinc-500">
+                    Build your trio — search and pick 3 players.
+                  </p>
+                ) : (
+                  <ul className="space-y-3">
+                    {selectedPlayers.map((player, index) => (
                       <li
                         key={player.id}
-                        className="rounded-lg border border-zinc-700/60 bg-zinc-900/60 px-3 py-2"
+                        className="relative overflow-hidden rounded-xl border border-emerald-900/40 bg-linear-to-br from-zinc-900 via-zinc-950 to-emerald-950/20 shadow-sm"
                       >
-                        <p className="text-sm font-medium text-white">
-                          {player.name}
-                        </p>
-                        <p className="text-xs text-zinc-500">
-                          <span className="font-semibold tabular-nums text-emerald-400">
-                            {player[currentStat]}
-                          </span>{" "}
-                          {currentStatLabel}
-                        </p>
+                        <div className="absolute inset-y-0 left-0 w-1 bg-emerald-500/70" />
+                        <div className="flex items-center justify-between gap-3 py-3 pl-4 pr-3">
+                          <div className="min-w-0 flex-1">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-500/80">
+                              Pick {index + 1}
+                            </span>
+                            <p className="truncate text-sm font-semibold text-white">
+                              {player.name}
+                            </p>
+                            <PlayerMeta player={player} />
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePlayer(player.id)}
+                            className="shrink-0 rounded-lg border border-zinc-600/80 px-2.5 py-1 text-xs font-medium text-zinc-400 transition hover:border-red-900/60 hover:bg-red-950/40 hover:text-red-300"
+                          >
+                            Remove
+                          </button>
+                        </div>
                       </li>
                     ))}
                   </ul>
+                )}
+              </div>
 
-                  <p className="mt-3 text-xs text-zinc-500">
-                    Total:{" "}
-                    <span className="font-semibold tabular-nums text-emerald-300">
-                      {solutionTotal}
-                    </span>
+              <button
+                type="button"
+                disabled={!canSubmit}
+                onClick={handleSubmit}
+                className="w-full rounded-xl bg-emerald-600 px-4 py-3.5 text-sm font-bold uppercase tracking-wide text-white shadow-lg shadow-emerald-900/40 transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500 disabled:shadow-none"
+              >
+                Submit Squad
+              </button>
+            </>
+          ) : (
+            <>
+              {resultPresentation && (
+                <div
+                  ref={resultSectionRef}
+                  className={`relative overflow-hidden rounded-2xl border px-5 py-5 text-center shadow-lg ${resultPresentation.card}`}
+                >
+                  <div className="pointer-events-none absolute -top-12 left-1/2 h-32 w-32 -translate-x-1/2 rounded-full bg-emerald-400/10 blur-3xl" />
+                  <div className="pointer-events-none absolute -bottom-8 right-0 h-24 w-24 rounded-full bg-white/5 blur-2xl" />
+
+                  <span
+                    className={`relative inline-flex rounded-full px-3 py-1 text-[10px] font-bold uppercase tracking-[0.25em] ring-1 ring-inset ${resultPresentation.badge}`}
+                  >
+                    Full Time
+                  </span>
+
+                  <p
+                    className={`relative mt-4 text-3xl font-black tracking-tight sm:text-4xl ${resultPresentation.headline}`}
+                  >
+                    {resultPresentation.message}
                   </p>
+
+                  <p className="relative mx-auto mt-2 max-w-xs text-sm leading-relaxed text-zinc-400">
+                    {getResultSubtext(result.difference)}
+                  </p>
+
+                  <div className="relative mt-5 grid grid-cols-3 gap-2 rounded-xl border border-white/5 bg-black/30 p-3">
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                        Your Total
+                      </p>
+                      <p className="mt-1 text-xl font-black tabular-nums text-white">
+                        {result.total}
+                      </p>
+                    </div>
+                    <div className="border-x border-white/5">
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                        Target
+                      </p>
+                      <p className="mt-1 text-xl font-black tabular-nums text-white">
+                        {targetNumber}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+                        Missed By
+                      </p>
+                      <p className="mt-1 text-xl font-black tabular-nums text-emerald-300">
+                        {result.difference}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="relative mt-4 border-t border-white/5 pt-4 text-left">
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">
+                      Your Squad
+                    </p>
+                    <ul className="mt-2 space-y-1.5">
+                      {selectedPlayers.map((player, index) => (
+                        <li
+                          key={player.id}
+                          className="flex items-center justify-between gap-3 rounded-lg bg-black/20 px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-semibold text-white">
+                              {index + 1}. {player.name}
+                            </p>
+                            <PlayerMeta player={player} />
+                          </div>
+                          <span className="shrink-0 text-sm font-bold tabular-nums text-emerald-400">
+                            {player[currentStat]}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
               )}
 
+              <div className="space-y-2">
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={handleShareResult}
+                    className="w-full rounded-xl border border-emerald-700/60 bg-emerald-950/40 px-4 py-3 text-sm font-semibold text-emerald-300 transition hover:border-emerald-500 hover:bg-emerald-950/60"
+                  >
+                    Share Result
+                  </button>
+                  {shareCopied && (
+                    <p className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] font-medium text-emerald-400">
+                      Copied!
+                    </p>
+                  )}
+                </div>
+
+                {!showAnswer ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowAnswer(true)}
+                    className="w-full rounded-xl border border-zinc-700/60 bg-zinc-950/60 px-4 py-3 text-sm font-semibold text-zinc-300 transition hover:border-zinc-600 hover:bg-zinc-900/80"
+                  >
+                    Reveal Answer
+                  </button>
+                ) : (
+                  <div className="rounded-xl border border-zinc-700/60 bg-zinc-950/60 px-4 py-4">
+                    <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-500">
+                      Winning Trio
+                    </h2>
+
+                    <ul className="mt-3 space-y-2">
+                      {solutionPlayers.map((player, index) => (
+                        <li
+                          key={player.id}
+                          className="relative overflow-hidden rounded-lg border border-emerald-900/40 bg-linear-to-br from-zinc-900 to-emerald-950/20 px-3 py-2.5 pl-4"
+                        >
+                          <div className="absolute inset-y-0 left-0 w-0.5 bg-emerald-500/60" />
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-500/70">
+                            {index + 1}
+                          </span>
+                          <p className="text-sm font-semibold text-white">
+                            {player.name}
+                          </p>
+                          <PlayerMeta player={player} />
+                          <p className="mt-1 text-xs text-zinc-500">
+                            <span className="font-bold tabular-nums text-emerald-400">
+                              {player[currentStat]}
+                            </span>{" "}
+                            {currentStatLabel}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+
+                    <p className="mt-4 border-t border-zinc-800 pt-3 text-center text-xs text-zinc-500">
+                      Winning total{" "}
+                      <span className="font-bold tabular-nums text-emerald-300">
+                        {solutionTotal}
+                      </span>
+                    </p>
+                  </div>
+                )}
+              </div>
             </>
           )}
 
@@ -613,6 +781,48 @@ export default function GameContainer() {
           >
             Dev New Random Puzzle
           </button>
+
+          {/* TODO: Remove Puzzle Analysis before production — balancing only. */}
+          <div className="rounded-lg border border-dashed border-zinc-800/80 bg-zinc-950/40 px-3 py-3">
+            <h3 className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500">
+              Puzzle Analysis
+            </h3>
+            <p className="mt-1 text-[10px] text-zinc-600">
+              {currentStatLabel} · target {targetNumber}
+            </p>
+            <dl className="mt-3 space-y-1.5">
+              <div className="flex items-center justify-between gap-3 text-[10px]">
+                <dt className="text-zinc-500">Difficulty</dt>
+                <dd className={`font-semibold ${puzzleDifficulty.textClassName}`}>
+                  {puzzleDifficulty.label}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-[10px]">
+                <dt className="text-zinc-500">Exact solutions</dt>
+                <dd className="font-semibold tabular-nums text-zinc-400">
+                  {puzzleAnalysis.exactSolutions}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-[10px]">
+                <dt className="text-zinc-500">Within 1 of target</dt>
+                <dd className="font-semibold tabular-nums text-zinc-400">
+                  {puzzleAnalysis.within1}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-[10px]">
+                <dt className="text-zinc-500">Within 2 of target</dt>
+                <dd className="font-semibold tabular-nums text-zinc-400">
+                  {puzzleAnalysis.within2}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-[10px]">
+                <dt className="text-zinc-500">Within 5 of target</dt>
+                <dd className="font-semibold tabular-nums text-zinc-400">
+                  {puzzleAnalysis.within5}
+                </dd>
+              </div>
+            </dl>
+          </div>
         </div>
       </div>
     </main>
