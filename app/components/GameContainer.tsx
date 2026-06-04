@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import players, { type Player } from "@/app/data/players";
 
 const stats = [
@@ -19,17 +19,65 @@ const statLabels: Record<StatKey, string> = {
   internationalAppearances: "International Appearances",
 };
 
-function getRandomStat() {
-  return stats[Math.floor(Math.random() * stats.length)];
+const LAUNCH_DATE = new Date(2026, 5, 4);
+
+function getLocalDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
-function pickRandomPlayers(count: number): Player[] {
-  return [...players].sort(() => Math.random() - 0.5).slice(0, count);
+function getPuzzleNumber(date: Date): number {
+  const msPerDay = 86_400_000;
+  const startOfLocalDay = (value: Date) =>
+    new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const daysSinceLaunch = Math.floor(
+    (startOfLocalDay(date) - startOfLocalDay(LAUNCH_DATE)) / msPerDay
+  );
+
+  return daysSinceLaunch + 1;
 }
 
-function createRound() {
-  const currentStat = getRandomStat();
-  const solutionPlayers = pickRandomPlayers(3);
+function hashDateToSeed(dateKey: string): number {
+  let hash = 0;
+  for (let i = 0; i < dateKey.length; i++) {
+    hash = (hash * 31 + dateKey.charCodeAt(i)) >>> 0;
+  }
+  return hash;
+}
+
+function createSeededRandom(seed: number) {
+  let state = seed;
+
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function getRandomStat(random: () => number) {
+  return stats[Math.floor(random() * stats.length)];
+}
+
+function pickRandomPlayers(count: number, random: () => number): Player[] {
+  const pool = [...players];
+
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+
+  return pool.slice(0, count);
+}
+
+function createDailyRound(date: Date = new Date()) {
+  const random = createSeededRandom(hashDateToSeed(getLocalDateKey(date)));
+  const currentStat = getRandomStat(random);
+  const solutionPlayers = pickRandomPlayers(3, random);
   const targetNumber = solutionPlayers.reduce(
     (sum, player) => sum + player[currentStat],
     0
@@ -40,6 +88,82 @@ function createRound() {
     targetNumber,
     solutionPlayers,
   };
+}
+
+function createPracticeRound() {
+  const random = () => Math.random();
+  const currentStat = getRandomStat(random);
+  const solutionPlayers = pickRandomPlayers(3, random);
+  const targetNumber = solutionPlayers.reduce(
+    (sum, player) => sum + player[currentStat],
+    0
+  );
+
+  return {
+    currentStat,
+    targetNumber,
+    solutionPlayers,
+  };
+}
+
+const STORAGE_PREFIX = "footly-daily";
+
+type SavedCompletion = {
+  puzzleNumber: number;
+  currentStat: StatKey;
+  targetNumber: number;
+  selectedPlayerIds: number[];
+  total: number;
+  difference: number;
+};
+
+function getStorageKey(date: Date = new Date()) {
+  return `${STORAGE_PREFIX}-${getLocalDateKey(date)}`;
+}
+
+function loadSavedCompletion(date: Date = new Date()): SavedCompletion | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = localStorage.getItem(getStorageKey(date));
+    if (!raw) return null;
+
+    return JSON.parse(raw) as SavedCompletion;
+  } catch {
+    return null;
+  }
+}
+
+function saveCompletion(completion: SavedCompletion, date: Date = new Date()) {
+  if (typeof window === "undefined") return;
+
+  localStorage.setItem(getStorageKey(date), JSON.stringify(completion));
+}
+
+function clearSavedCompletion(date: Date = new Date()) {
+  if (typeof window === "undefined") return;
+
+  localStorage.removeItem(getStorageKey(date));
+}
+
+function restoreSavedPlayers(saved: SavedCompletion): Player[] {
+  return saved.selectedPlayerIds
+    .map((id) => players.find((player) => player.id === id))
+    .filter((player): player is Player => player !== undefined);
+}
+
+function formatShareText(
+  puzzleNumber: number,
+  statLabel: string,
+  difference: number,
+  message: string
+) {
+  const differenceLine =
+    difference === 0
+      ? "On target"
+      : `${difference} ${difference === 1 ? "point" : "points"} from target`;
+
+  return `Footly #${puzzleNumber}\n${statLabel}\n${differenceLine}\n${message}`;
 }
 
 function getResultPresentation(difference: number) {
@@ -84,15 +208,42 @@ function getResultPresentation(difference: number) {
 }
 
 export default function GameContainer() {
+  const puzzleNumber = getPuzzleNumber(new Date());
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedPlayers, setSelectedPlayers] = useState<Player[]>([]);
-  const [round, setRound] = useState(createRound);
+  const [round, setRound] = useState(createDailyRound);
   const { currentStat, targetNumber, solutionPlayers } = round;
+  const [isPracticeRound, setIsPracticeRound] = useState(false);
   const [result, setResult] = useState<null | {
     total: number;
     difference: number;
   }>(null);
-  const [showDeveloperSolution, setShowDeveloperSolution] = useState(false);
+  const [showAnswer, setShowAnswer] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
+
+  useEffect(() => {
+    const saved = loadSavedCompletion();
+    if (!saved || saved.puzzleNumber !== puzzleNumber) return;
+
+    const dailyRound = createDailyRound();
+    if (
+      saved.currentStat !== dailyRound.currentStat ||
+      saved.targetNumber !== dailyRound.targetNumber
+    ) {
+      return;
+    }
+
+    const restoredPlayers = restoreSavedPlayers(saved);
+    if (restoredPlayers.length !== 3) return;
+
+    // Restore persisted completion after client mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage hydration
+    setSelectedPlayers(restoredPlayers);
+    setResult({
+      total: saved.total,
+      difference: saved.difference,
+    });
+  }, [puzzleNumber]);
 
   const currentStatLabel = statLabels[currentStat];
 
@@ -104,10 +255,13 @@ export default function GameContainer() {
     return sum + player[currentStat];
   }, 0);
 
-  const canSubmit = selectedPlayers.length === 3 && result === null;
+  const canSubmit =
+    selectedPlayers.length === 3 &&
+    result === null &&
+    (isPracticeRound || !loadSavedCompletion());
 
   function handleSelectPlayer(player: Player) {
-    if (selectedPlayers.length === 3) return;
+    if (result || selectedPlayers.length === 3) return;
 
     const alreadySelected = selectedPlayers.some(
       (selectedPlayer) => selectedPlayer.id === player.id
@@ -127,21 +281,66 @@ export default function GameContainer() {
     );
   }
 
-  function handleSubmit() {
-    if (!canSubmit) return;
-
-    setResult({
-      total: selectedTotal,
-      difference: Math.abs(targetNumber - selectedTotal),
-    });
-  }
-
-  function handleNextRound() {
+  function resetGameplayState() {
     setSelectedPlayers([]);
     setSearchTerm("");
     setResult(null);
-    setShowDeveloperSolution(false);
-    setRound(createRound());
+    setShowAnswer(false);
+    setShareCopied(false);
+  }
+
+  function handleSubmit() {
+    if (!canSubmit) return;
+
+    const submission = {
+      total: selectedTotal,
+      difference: Math.abs(targetNumber - selectedTotal),
+    };
+
+    setResult(submission);
+
+    if (!isPracticeRound) {
+      saveCompletion({
+        puzzleNumber,
+        currentStat,
+        targetNumber,
+        selectedPlayerIds: selectedPlayers.map((player) => player.id),
+        total: submission.total,
+        difference: submission.difference,
+      });
+    }
+  }
+
+  function handleDevResetToday() {
+    clearSavedCompletion();
+    setRound(createDailyRound());
+    setIsPracticeRound(false);
+    resetGameplayState();
+  }
+
+  function handleDevNewRandomPuzzle() {
+    setRound(createPracticeRound());
+    setIsPracticeRound(true);
+    resetGameplayState();
+  }
+
+  async function handleShareResult() {
+    if (!result || !resultPresentation) return;
+
+    const shareText = formatShareText(
+      puzzleNumber,
+      currentStatLabel,
+      result.difference,
+      resultPresentation.message
+    );
+
+    try {
+      await navigator.clipboard.writeText(shareText);
+      setShareCopied(true);
+      window.setTimeout(() => setShareCopied(false), 2000);
+    } catch {
+      setShareCopied(false);
+    }
   }
 
   const solutionTotal = solutionPlayers.reduce(
@@ -160,6 +359,10 @@ export default function GameContainer() {
           <h1 className="text-sm font-semibold uppercase tracking-[0.35em] text-emerald-400/90">
             Footly
           </h1>
+
+          <p className="mt-2 text-xs font-medium uppercase tracking-widest text-zinc-500">
+            Footly #{puzzleNumber}
+          </p>
 
           <p className="mt-6 text-xs font-medium uppercase tracking-widest text-zinc-500">
             Target
@@ -331,60 +534,85 @@ export default function GameContainer() {
             </div>
           )}
 
-          {result && (
-            <button
-              type="button"
-              onClick={handleNextRound}
-              className="w-full rounded-xl border border-emerald-700/60 bg-transparent px-4 py-3 text-sm font-semibold text-emerald-300 transition hover:border-emerald-500 hover:bg-emerald-950/50"
-            >
-              Next Round
-            </button>
+          {result && resultPresentation && (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={handleShareResult}
+                className="w-full rounded-xl border border-emerald-700/60 bg-emerald-950/40 px-4 py-3 text-sm font-semibold text-emerald-300 transition hover:border-emerald-500 hover:bg-emerald-950/60"
+              >
+                Share Result
+              </button>
+              {shareCopied && (
+                <p className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-[10px] font-medium text-emerald-400">
+                  Copied!
+                </p>
+              )}
+            </div>
           )}
 
-          <div className="rounded-xl border border-dashed border-amber-700/40 bg-amber-950/20 px-4 py-4">
-            <h2 className="text-xs font-semibold uppercase tracking-widest text-amber-500/80">
-              Developer Check
-            </h2>
+          {result && (
+            <>
+              {!showAnswer ? (
+                <button
+                  type="button"
+                  onClick={() => setShowAnswer(true)}
+                  className="w-full rounded-xl border border-zinc-700/60 bg-zinc-950/60 px-4 py-3 text-sm font-semibold text-zinc-300 transition hover:border-zinc-600 hover:bg-zinc-900/80"
+                >
+                  Reveal Answer
+                </button>
+              ) : (
+                <div className="rounded-xl border border-zinc-700/60 bg-zinc-950/60 px-4 py-4">
+                  <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-500">
+                    Answer
+                  </h2>
 
-            <button
-              type="button"
-              onClick={() => setShowDeveloperSolution((visible) => !visible)}
-              className="mt-3 w-full rounded-lg border border-amber-700/50 bg-amber-950/40 px-3 py-2 text-xs font-medium text-amber-300 transition hover:border-amber-600 hover:bg-amber-950/60"
-            >
-              Reveal Generated Solution
-            </button>
+                  <ul className="mt-3 space-y-2">
+                    {solutionPlayers.map((player) => (
+                      <li
+                        key={player.id}
+                        className="rounded-lg border border-zinc-700/60 bg-zinc-900/60 px-3 py-2"
+                      >
+                        <p className="text-sm font-medium text-white">
+                          {player.name}
+                        </p>
+                        <p className="text-xs text-zinc-500">
+                          <span className="font-semibold tabular-nums text-emerald-400">
+                            {player[currentStat]}
+                          </span>{" "}
+                          {currentStatLabel}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
 
-            {showDeveloperSolution && (
-              <div className="mt-3 space-y-2">
-                <ul className="space-y-2">
-                  {solutionPlayers.map((player) => (
-                    <li
-                      key={player.id}
-                      className="rounded-lg border border-amber-800/40 bg-zinc-950/60 px-3 py-2"
-                    >
-                      <p className="text-sm font-medium text-amber-100">
-                        {player.name}
-                      </p>
-                      <p className="text-xs text-amber-400/80">
-                        <span className="font-semibold tabular-nums">
-                          {player[currentStat]}
-                        </span>{" "}
-                        {currentStatLabel}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
+                  <p className="mt-3 text-xs text-zinc-500">
+                    Total:{" "}
+                    <span className="font-semibold tabular-nums text-emerald-300">
+                      {solutionTotal}
+                    </span>
+                  </p>
+                </div>
+              )}
 
-                <p className="text-xs text-amber-400/90">
-                  Sum:{" "}
-                  <span className="font-semibold tabular-nums text-amber-200">
-                    {solutionTotal}
-                  </span>{" "}
-                  (target: {targetNumber})
-                </p>
-              </div>
-            )}
-          </div>
+            </>
+          )}
+
+          {/* TODO: Remove dev-only controls before production. */}
+          <button
+            type="button"
+            onClick={handleDevResetToday}
+            className="w-full rounded-lg border border-dashed border-zinc-800 bg-transparent px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-zinc-600 transition hover:border-zinc-700 hover:text-zinc-500"
+          >
+            Dev Reset Today
+          </button>
+          <button
+            type="button"
+            onClick={handleDevNewRandomPuzzle}
+            className="w-full rounded-lg border border-dashed border-zinc-800 bg-transparent px-3 py-1.5 text-[10px] font-medium uppercase tracking-wider text-zinc-600 transition hover:border-zinc-700 hover:text-zinc-500"
+          >
+            Dev New Random Puzzle
+          </button>
         </div>
       </div>
     </main>
