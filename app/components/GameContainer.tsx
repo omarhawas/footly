@@ -5,10 +5,8 @@ import players, { type Player } from "@/app/data/players";
 
 const stats = [
   "clubGoals",
-  "clubAssists",
   "clubAppearances",
   "internationalGoals",
-  "internationalAssists",
   "internationalAppearances",
 ] as const;
 
@@ -16,33 +14,31 @@ type StatKey = (typeof stats)[number];
 
 const statLabels: Record<StatKey, string> = {
   clubGoals: "Club Goals",
-  clubAssists: "Club Assists",
   clubAppearances: "Club Appearances",
   internationalGoals: "International Goals",
-  internationalAssists: "International Assists",
   internationalAppearances: "International Appearances",
 };
-
-function getRandomTarget(stat: StatKey) {
-  const values = players.map((player) => player[stat]).sort((a, b) => a - b);
-  const minSum = values[0] + values[1] + values[2];
-  const maxSum =
-    values[values.length - 1] +
-    values[values.length - 2] +
-    values[values.length - 3];
-
-  return Math.floor(minSum + Math.random() * (maxSum - minSum + 1));
-}
 
 function getRandomStat() {
   return stats[Math.floor(Math.random() * stats.length)];
 }
 
+function pickRandomPlayers(count: number): Player[] {
+  return [...players].sort(() => Math.random() - 0.5).slice(0, count);
+}
+
 function createRound() {
-  const stat = getRandomStat();
+  const currentStat = getRandomStat();
+  const solutionPlayers = pickRandomPlayers(3);
+  const targetNumber = solutionPlayers.reduce(
+    (sum, player) => sum + player[currentStat],
+    0
+  );
+
   return {
-    currentStat: stat,
-    targetNumber: getRandomTarget(stat),
+    currentStat,
+    targetNumber,
+    solutionPlayers,
   };
 }
 
@@ -91,11 +87,12 @@ export default function GameContainer() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedPlayers, setSelectedPlayers] = useState<Player[]>([]);
   const [round, setRound] = useState(createRound);
-  const { currentStat, targetNumber } = round;
+  const { currentStat, targetNumber, solutionPlayers } = round;
   const [result, setResult] = useState<null | {
     total: number;
     difference: number;
   }>(null);
+  const [showDeveloperSolution, setShowDeveloperSolution] = useState(false);
 
   const currentStatLabel = statLabels[currentStat];
 
@@ -143,8 +140,14 @@ export default function GameContainer() {
     setSelectedPlayers([]);
     setSearchTerm("");
     setResult(null);
+    setShowDeveloperSolution(false);
     setRound(createRound());
   }
+
+  const solutionTotal = solutionPlayers.reduce(
+    (sum, player) => sum + player[currentStat],
+    0
+  );
 
   const resultPresentation = result
     ? getResultPresentation(result.difference)
@@ -337,6 +340,51 @@ export default function GameContainer() {
               Next Round
             </button>
           )}
+
+          <div className="rounded-xl border border-dashed border-amber-700/40 bg-amber-950/20 px-4 py-4">
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-amber-500/80">
+              Developer Check
+            </h2>
+
+            <button
+              type="button"
+              onClick={() => setShowDeveloperSolution((visible) => !visible)}
+              className="mt-3 w-full rounded-lg border border-amber-700/50 bg-amber-950/40 px-3 py-2 text-xs font-medium text-amber-300 transition hover:border-amber-600 hover:bg-amber-950/60"
+            >
+              Reveal Generated Solution
+            </button>
+
+            {showDeveloperSolution && (
+              <div className="mt-3 space-y-2">
+                <ul className="space-y-2">
+                  {solutionPlayers.map((player) => (
+                    <li
+                      key={player.id}
+                      className="rounded-lg border border-amber-800/40 bg-zinc-950/60 px-3 py-2"
+                    >
+                      <p className="text-sm font-medium text-amber-100">
+                        {player.name}
+                      </p>
+                      <p className="text-xs text-amber-400/80">
+                        <span className="font-semibold tabular-nums">
+                          {player[currentStat]}
+                        </span>{" "}
+                        {currentStatLabel}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+
+                <p className="text-xs text-amber-400/90">
+                  Sum:{" "}
+                  <span className="font-semibold tabular-nums text-amber-200">
+                    {solutionTotal}
+                  </span>{" "}
+                  (target: {targetNumber})
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </main>
